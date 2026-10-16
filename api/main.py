@@ -1,5 +1,7 @@
 import os, io, tempfile
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI, UploadFile, File, Header, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
