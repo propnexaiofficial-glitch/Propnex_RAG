@@ -1,12 +1,14 @@
-import os, io, time, tempfile
+import os, io, tempfile
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Header, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 import librosa
 import soundfile as sf
 
 os.environ["COQUI_TOS_AGREED"] = "1"
 REF_WAV = os.getenv("REF_WAV", "assets/reference.wav")
+API_KEY = os.getenv("SERVER_API_KEY", "")
 models = {}
 
 
@@ -24,40 +26,50 @@ async def lifespan(app):
 app = FastAPI(lifespan=lifespan)
 
 
+def check(key):
+    if not API_KEY or key != API_KEY:
+        raise HTTPException(status_code=401, detail="bad key")
+
+
+class Q(BaseModel):
+    question: str
+
+
+class T(BaseModel):
+    text: str
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
 
 
-@app.post("/voice")
-async def voice(file: UploadFile = File(...)):
-    t0 = time.time()
+@app.post("/stt")
+async def stt(file: UploadFile = File(...), x_api_key: str | None = Header(None)):
+    check(x_api_key)
     with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as f:
         f.write(await file.read())
         path = f.name
     audio, _ = librosa.load(path, sr=16000, mono=True)
     os.remove(path)
-
     segs, _ = models["stt"].transcribe(
         audio, language="hi", beam_size=1,
         initial_prompt="प्रॉपनेक्स एआई टेक्नोलॉजी, तनिष्क गुप्ता, वॉइस एजेंट",
     )
-    question = " ".join(s.text for s in segs).strip()
-    t1 = time.time()
+    return {"text": " ".join(s.text for s in segs).strip()}
 
-    reply = models["answer"](question)["answer"]
-    t2 = time.time()
 
-    wav = models["tts"].tts(text=reply, speaker_wav=REF_WAV, language="hi")
+@app.post("/answer")
+def answer_ep(q: Q, x_api_key: str | None = Header(None)):
+    check(x_api_key)
+    r = models["answer"](q.question)
+    return {"answer": r["answer"], "search_query": r["search_query"]}
+
+
+@app.post("/tts")
+def tts_ep(t: T, x_api_key: str | None = Header(None)):
+    check(x_api_key)
+    wav = models["tts"].tts(text=t.text, speaker_wav=REF_WAV, language="hi")
     buf = io.BytesIO()
     sf.write(buf, wav, 24000, format="WAV")
-    t3 = time.time()
-
-    return Response(
-        content=buf.getvalue(),
-        media_type="audio/wav",
-        headers={
-            "X-Question": question.encode("unicode_escape").decode(),
-            "X-Timing": f"stt={t1-t0:.1f},rag={t2-t1:.1f},tts={t3-t2:.1f}",
-        },
-    )
+    return Response(content=buf.getvalue(), media_type="audio/wav")
