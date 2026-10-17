@@ -1,4 +1,4 @@
-import os, io, tempfile
+import os, io, tempfile, subprocess
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
@@ -49,11 +49,22 @@ def health():
 @app.post("/stt")
 async def stt(file: UploadFile = File(...), x_api_key: str | None = Header(None)):
     check(x_api_key)
-    with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
         f.write(await file.read())
-        path = f.name
-    audio, _ = librosa.load(path, sr=16000, mono=True)
-    os.remove(path)
+        src = f.name
+    dst = src + ".wav"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", src, "-ar", "16000", "-ac", "1", dst],
+            check=True, capture_output=True,
+        )
+        audio, _ = librosa.load(dst, sr=16000, mono=True)
+    except subprocess.CalledProcessError:
+        raise HTTPException(status_code=400, detail="audio decode failed")
+    finally:
+        for p in (src, dst):
+            if os.path.exists(p):
+                os.remove(p)
     segs, _ = models["stt"].transcribe(
         audio, language="hi", beam_size=1,
         initial_prompt="प्रॉपनेक्स एआई टेक्नोलॉजी, तनिष्क गुप्ता, वॉइस एजेंट",
