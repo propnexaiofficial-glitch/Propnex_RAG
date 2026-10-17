@@ -59,8 +59,8 @@ async def stt(file: UploadFile = File(...), x_api_key: str | None = Header(None)
             check=True, capture_output=True,
         )
         audio, _ = librosa.load(dst, sr=16000, mono=True)
-    except subprocess.CalledProcessError:
-        raise HTTPException(status_code=400, detail="audio decode failed")
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=400, detail=e.stderr.decode(errors="ignore")[-300:])
     finally:
         for p in (src, dst):
             if os.path.exists(p):
